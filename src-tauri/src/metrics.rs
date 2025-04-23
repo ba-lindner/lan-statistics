@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, thread::sleep, time::Duration};
+use std::{collections::HashMap, convert::Infallible, error::Error, thread::sleep, time::Duration};
 
 use clokwerk::{Scheduler, TimeUnits};
 use log::{error, info};
@@ -10,7 +10,7 @@ use crate::config::{get_or_create_config, Settings};
 fn new_opts(config: &Settings, name: &'static str, help: &'static str) -> Opts {
     Opts::new(name, help)
         .const_label("id", &config.id)
-        .const_label("username", config.name.clone().unwrap_or(String::from("")))
+        .const_label("username", config.name.clone().unwrap_or_default())
 }
 
 fn new_metric<T: Collector + Clone + 'static, U: Error>(r: &Registry, metric: Result<T, U>) -> Result<T, String> {
@@ -173,7 +173,7 @@ fn register_periodic(config: &Settings, r: &Registry) -> Result<impl FnMut(), St
     })
 }
 
-pub fn metrics_loop() -> Result<(), String> {
+pub fn metrics_loop() -> Result<Infallible, String> {
     let r = Registry::new();
     let config = get_or_create_config(false)?;
 

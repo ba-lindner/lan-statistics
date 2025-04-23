@@ -15,13 +15,15 @@ pub struct Settings {
     pub password: Option<String>
 }
 
-pub fn default_config() -> Settings {
-    Settings {
-        id: Uuid::new_v4().to_string(),
-        remote: String::from("https://lan.pein-gera.de"),
-        name: None,
-        autostart: true,
-        password: None
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            id: Uuid::new_v4().to_string(),
+            remote: String::from("https://lan.pein-gera.de"),
+            name: None,
+            autostart: true,
+            password: None
+        }
     }
 }
 
@@ -71,7 +73,7 @@ pub fn set_config(config: &Settings) -> Result<(), String> {
 }
 
 pub fn create_default_config() -> Result<Settings, String> {
-    let default: Settings = default_config();
+    let default = Settings::default();
 
     set_config(&default)?;
 
