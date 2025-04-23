@@ -1,9 +1,10 @@
-use std::{fs::File, io::Write, fmt::Write as _};
+use std::{fs::File, io::Write};
 
+use anyhow::{Context, Result};
 use config::Config;
 use log::warn;
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -12,7 +13,7 @@ pub struct Settings {
     pub remote: String,
     pub name: Option<String>,
     pub autostart: bool,
-    pub password: Option<String>
+    pub password: Option<String>,
 }
 
 impl Default for Settings {
@@ -22,67 +23,58 @@ impl Default for Settings {
             remote: String::from("https://lan.pein-gera.de"),
             name: None,
             autostart: true,
-            password: None
+            password: None,
         }
     }
 }
 
-const PASSWORD_PLACEHOLDER: &str = "(unchanged)";
-pub const CONFIG_PATH: &str = "config.toml";
+impl Settings {
+    const PASSWORD_PLACEHOLDER: &str = "(unchanged)";
+    pub const CONFIG_PATH: &str = "config.toml";
 
-pub fn get_config(censor: bool) -> Result<Settings, String> {
-    Config::builder()
-        .add_source(config::File::with_name(CONFIG_PATH))
-        .build()
-        .map_err(|e| e.to_string())?
-        .try_deserialize::<Settings>()
-        .map(|mut c| {
-            if censor {
-                c.password = c.password
-                    .map(|_| String::from(PASSWORD_PLACEHOLDER));
-                c
-            } else {
-                c
-            }
-        })
-        .map_err(|e| e.to_string())
-}
-
-pub fn set_config(config: &Settings) -> Result<(), String> {
-    let password = config.password.clone().map(|p|
-        if p == PASSWORD_PLACEHOLDER {
-            Ok::<Option<String>, String>(get_config(false).ok()
-                .and_then(|c| c.password))
-        } else {
-            let mut hasher = Sha256::new();
-            hasher.update(p);
-            let mut out = String::new();
-            write!(out, "{:x}", hasher.finalize()).map_err(|e| e.to_string())?;
-            Ok(Some(out))
+    pub fn load(censor: bool) -> Result<Self> {
+        let mut settings = Config::builder()
+            .add_source(config::File::with_name(Self::CONFIG_PATH))
+            .build()
+            .context("Failed to read config file")?
+            .try_deserialize::<Settings>()
+            .context("Failed to parse config file")?;
+        if let (true, Some(pwd)) = (censor, &mut settings.password) {
+            *pwd = Self::PASSWORD_PLACEHOLDER.to_string();
         }
-    ).unwrap_or(Ok(None))?;
-    let mut new_config = config.clone();
-    new_config.password = password;
+        Ok(settings)
+    }
 
-    let mut file = File::create(CONFIG_PATH).map_err(|e| e.to_string())?;
-    let content = toml::to_string_pretty(&new_config).map_err(|e| e.to_string())?;
+    pub fn store(&self) -> Result<()> {
+        let mut new_config = self.clone();
+        new_config.password = match new_config.password.as_deref() {
+            Some(Self::PASSWORD_PLACEHOLDER) => Settings::load(false)?.password,
+            Some(changed) => {
+                let mut hasher = Sha256::new();
+                hasher.update(changed);
+                Some(format!("{:x}", hasher.finalize()))
+            }
+            None => None,
+        };
 
-    file.write(content.as_bytes()).map_err(|e| e.to_string())?;
+        let mut file = File::create(Self::CONFIG_PATH)?;
+        let content = toml::to_string_pretty(&new_config)?;
 
-    Ok(())
-}
+        file.write_all(content.as_bytes())?;
 
-pub fn create_default_config() -> Result<Settings, String> {
-    let default = Settings::default();
+        Ok(())
+    }
 
-    set_config(&default)?;
+    pub fn create_default() -> Result<Self> {
+        let this = Self::default();
+        this.store()?;
+        Ok(this)
+    }
 
-    Ok(default)
-}
-
-pub fn get_or_create_config(censor: bool) -> Result<Settings, String> {
-    get_config(censor).or_else(|e| {
-        warn!("error getting config: {e}");
-        create_default_config()
-    })
+    pub fn load_or_create(censor: bool) -> Result<Self> {
+        Self::load(censor).or_else(|e| {
+            warn!("error getting config: {e}");
+            Self::create_default()
+        })
+    }
 }

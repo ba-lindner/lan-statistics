@@ -26,6 +26,8 @@ config = "0.15.11"
 named-lock = "0.4.1"
 log4rs = "1.3.0"
 log = "0.4.27"
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
 
 [dependencies.sysinfo]
 version = "0.34.2"

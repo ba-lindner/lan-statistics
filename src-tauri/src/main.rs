@@ -1,41 +1,56 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{env, error::Error, process::Command};
+use std::{
+    env,
+    process::{Command, ExitCode},
+};
 
+use anyhow::{anyhow, Context, Result};
+use clap::Parser;
 use log::{error, info, warn};
 use named_lock::NamedLock;
+
 mod app;
 mod config;
 mod metrics;
 
-const USAGE: &str = "\
-usage: lan-tracker.exe [-s|--service] [-h|--help]\n\
-    -s|--service: start background task\n\
-    -h|--help:   print this usage information";
+#[derive(Parser)]
+struct Cli {
+    /// start background task
+    #[arg(short, long)]
+    service: bool,
+}
 
-fn main() -> Result<(), Box<dyn Error>> {
+fn main() -> ExitCode {
+    let is_service = Cli::parse().service;
+
+    if let Err(e) = setup_logging() {
+        eprintln!("Failed to initialize logging: {e}");
+        return ExitCode::FAILURE;
+    };
+
+    match run_service(is_service) {
+        Err(e) => {
+            error!("{e}");
+            ExitCode::FAILURE
+        }
+        Ok(()) => ExitCode::SUCCESS,
+    }
+}
+
+fn setup_logging() -> Result<()> {
     let path = env::current_exe()?
         .parent()
-        .ok_or(String::from("could not get program folder"))?
+        .ok_or(anyhow!("Failed to get program folder"))?
         .to_path_buf();
     env::set_current_dir(path)?;
 
     log4rs::init_file("log4rs.yml", Default::default())?;
+    Ok(())
+}
 
-    let mut is_service = false;
-
-    for arg in env::args() {
-        match arg.as_str() {
-            "-s" | "--service" => is_service = true,
-            "-h" | "--help" => {
-                println!("{USAGE}");
-                return Ok(());
-            }
-            _ => {}
-        }
-    }
-
+fn run_service(is_service: bool) -> Result<()> {
     if is_service {
         match NamedLock::create("lan-tracker")?.try_lock() {
             Ok(_) => (),
@@ -43,19 +58,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 warn!("could not get lock. Another instance is already running.");
                 return Ok(());
             }
-            Err(e) => Err(e)?,
+            Err(e) => return Err(e.into()),
         };
 
         info!("starting service");
 
-        let Err(why) = metrics::metrics_loop();
-        error!("error in metrics loop: {why}");
+        match metrics::metrics_loop().context("Failed to start service")? {}
     } else {
         if let Err(why) = Command::new(env::current_exe()?).args(["-s"]).spawn() {
-            error!("error spawning service: {why}")
+            error!("error spawning service: {why}");
         }
 
         app::run();
+        Ok(())
     }
-    Ok(())
 }
